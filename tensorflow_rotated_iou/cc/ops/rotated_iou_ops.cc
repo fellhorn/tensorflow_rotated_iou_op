@@ -18,7 +18,7 @@ limitations under the License.
 
 using namespace tensorflow;
 
-REGISTER_OP("RotatedIOU")
+REGISTER_OP("RotatedIOUGrid")
     .Attr("T: {float}")
     .Input("vertices1: T")
     .Input("vertices2: T")
@@ -30,6 +30,25 @@ REGISTER_OP("RotatedIOU")
       shape_inference::ShapeHandle boxes2_input_shape = c->input(1);
 
       result_shape = c->MakeShape({c->Dim(boxes1_input_shape, 0), c->Dim(boxes2_input_shape, 0)});
+
+      c->set_output(0,result_shape);
+      return Status::OK();
+    });
+
+REGISTER_OP("RotatedIOU")
+    .Attr("T: {float}")
+    .Input("vertices1: T")
+    .Input("vertices2: T")
+    .Output("out: T")
+    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
+      shape_inference::ShapeHandle result_shape;
+
+      shape_inference::ShapeHandle boxes1_input_shape = c->input(0);
+      shape_inference::ShapeHandle boxes2_input_shape = c->input(1);
+
+      // DCHECK_EQ(c->Dim(boxes1_input_shape, 0), c->Dim(boxes1_input_shape, 0));
+
+      result_shape = c->MakeShape({c->Dim(boxes1_input_shape, 0)});
 
       c->set_output(0,result_shape);
       return Status::OK();

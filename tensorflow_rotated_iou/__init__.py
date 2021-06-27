@@ -16,4 +16,4 @@
 
 from __future__ import absolute_import
 
-from tensorflow_rotated_iou.python.ops.rotated_iou_ops import rotated_iou
+from tensorflow_rotated_iou.python.ops.rotated_iou_ops import rotated_iou, rotated_iou_grid

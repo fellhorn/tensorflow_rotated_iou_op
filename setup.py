@@ -23,11 +23,11 @@ from setuptools import setup
 from setuptools.dist import Distribution
 
 
-__version__ = '0.0.1'
+__version__ = '0.0.2'
 REQUIRED_PACKAGES = [
-    'tensorflow >= 1.12.0',
+    'tensorflow >= 2.2.0',
 ]
-project_name = 'tensorflow-custom-ops'
+project_name = 'tensorflow-rotated-iou-ops'
 
 
 class BinaryDistribution(Distribution):
@@ -40,9 +40,8 @@ class BinaryDistribution(Distribution):
 setup(
     name=project_name,
     version=__version__,
-    description=('tensorflow-custom-ops is an examples for custom ops for TensorFlow'),
-    author='Google Inc.',
-    author_email='opensource@google.com',
+    description=('rotated IOU ops for TensorFlow'),
+    author='Dennis Keck',
     # Contained modules and scripts.
     packages=find_packages(),
     install_requires=REQUIRED_PACKAGES,
@@ -58,7 +57,6 @@ setup(
         'Intended Audience :: Education',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: Apache Software License',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
@@ -67,5 +65,5 @@ setup(
         'Topic :: Software Development :: Libraries',
     ],
     license='Apache 2.0',
-    keywords='tensorflow custom op machine learning',
+    keywords='tensorflow custom op machine learning iou riou',
 )

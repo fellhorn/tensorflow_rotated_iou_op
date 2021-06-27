@@ -1,27 +1,16 @@
-/* 
-Based on https://github.com/DetectionTeamUCAS/RetinaNet_Tensorflow_Rotation/blob/master/libs/box_utils/rbbox_overlaps_kernel.cu
+/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 
-Published under MIT License
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-Original Copyright (c) 2018 DetectionTeamUCAS
+    http://www.apache.org/licenses/LICENSE-2.0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ==============================================================================*/
 
 #if GOOGLE_CUDA
@@ -33,6 +22,8 @@ SOFTWARE.
 #include <cmath>
 
 #define DIVUP(m,n) ((m) / (n) + ((m) % (n) > 0))
+
+#define THREADS_PER_BLOCK 256
 
 namespace tensorflow {
 namespace functor {
@@ -216,8 +207,8 @@ __device__ inline int inter_pts(float * pts1, float * pts2, float * int_pts) {
 __device__ inline void convert_region(float * pts , float const * const region) {
 
   float angle = region[4];
-  float a_cos = cos(angle/180.0*3.1415926535);
-  float a_sin = sin(angle/180.0*3.1415926535);
+  float a_cos = cos(angle);
+  float a_sin = sin(angle);
 
   float ctr_x = region[0];
   float ctr_y = region[1];
@@ -266,6 +257,11 @@ __device__ inline float inter(float const * const region1, float const * const r
 
 
 __device__ inline float devRotateIoU(float const * const region1, float const * const region2) {
+  // no intersection for zero size boxes
+  if(((fabs(region1[2]) < 1e-5) && (fabs(region1[3] < 1e-5))) ||
+      ((fabs(region2[2]) < 1e-5) && (fabs(region2[3] < 1e-5)))) {
+    return 0.0;
+  }
 
   if((fabs(region1[0] - region2[0]) < 1e-5) && (fabs(region1[1] - region2[1]) < 1e-5) && (fabs(region1[2] - region2[2]) < 1e-5) && (fabs(region1[3] - region2[3]) < 1e-5) && (fabs(region1[4] - region2[4]) < 1e-5)) {
     return 1.0;
@@ -286,20 +282,86 @@ __device__ inline float devRotateIoU(float const * const region1, float const * 
 
 // Define the CUDA kernel.
 template <typename T>
+__global__ void RotatedIOUGridCudaKernel(
+  const int boxes1_size, const int boxes2_size,
+  const T* boxes1, const T* boxes2,
+  T* out) {
+
+  // copy the data to shared data for faster access
+  __shared__ float block_boxes1[THREADS_PER_BLOCK * 5];
+  __shared__ float block_boxes2[THREADS_PER_BLOCK * 5];
+
+  const int row_start = blockIdx.x * THREADS_PER_BLOCK;
+  const int col_start = blockIdx.y * THREADS_PER_BLOCK;
+
+  const int num_rows_block = min(boxes1_size - row_start, THREADS_PER_BLOCK);
+  const int num_cols_block = min(boxes2_size - col_start, THREADS_PER_BLOCK);
+
+  const int index_col = col_start + threadIdx.x;
+
+  // move all data which is handled in this block to shared memory
+  if (threadIdx.x < num_rows_block) {
+    const int index_row = row_start + threadIdx.x;
+    block_boxes1[threadIdx.x * 5 + 0] = boxes1[index_row * 5 + 0];
+    block_boxes1[threadIdx.x * 5 + 1] = boxes1[index_row * 5 + 1];
+    block_boxes1[threadIdx.x * 5 + 2] = boxes1[index_row * 5 + 2];
+    block_boxes1[threadIdx.x * 5 + 3] = boxes1[index_row * 5 + 3];
+    block_boxes1[threadIdx.x * 5 + 4] = boxes1[index_row * 5 + 4];
+  }
+
+  if (index_col < boxes2_size) {
+    block_boxes2[threadIdx.x * 5 + 0] = boxes2[index_col * 5 + 0];
+    block_boxes2[threadIdx.x * 5 + 1] = boxes2[index_col * 5 + 1];
+    block_boxes2[threadIdx.x * 5 + 2] = boxes2[index_col * 5 + 2];
+    block_boxes2[threadIdx.x * 5 + 3] = boxes2[index_col * 5 + 3];
+    block_boxes2[threadIdx.x * 5 + 4] = boxes2[index_col * 5 + 4];
+  }
+
+  __syncthreads();
+
+  // iterate over rows instead of cols as boxes1 < boxes2 in our case
+  if (index_col < boxes2_size) {
+    for(int i = 0; i < num_rows_block; i++) {
+        int offset = (row_start + i) * boxes2_size + index_col;
+        out[offset] = devRotateIoU(block_boxes1 + i * 5, block_boxes2 + threadIdx.x * 5);
+    }
+  }
+}
+
+template <typename T>
 __global__ void RotatedIOUCudaKernel(
   const int boxes1_size, const int boxes2_size,
   const T* boxes1, const T* boxes2,
   T* out) {
-   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < boxes1_size; i += blockDim.x * gridDim.x) {
-    for (int j = blockIdx.y * blockDim.y + threadIdx.y; j < boxes2_size; j += blockDim.y * gridDim.y) {
-        out[i * boxes2_size + j] = devRotateIoU(boxes1 + i * 5, boxes2 + j * 5);
-    }
-   }
+
+  // copy the data to shared data for faster access
+  __shared__ float block_boxes1[THREADS_PER_BLOCK * 5];
+  __shared__ float block_boxes2[THREADS_PER_BLOCK * 5];
+  const int i = blockIdx.x * THREADS_PER_BLOCK + threadIdx.x;
+
+  if (i < boxes1_size) {
+    block_boxes1[threadIdx.x * 5 + 0] = boxes1[i * 5 + 0];
+    block_boxes1[threadIdx.x * 5 + 1] = boxes1[i * 5 + 1];
+    block_boxes1[threadIdx.x * 5 + 2] = boxes1[i * 5 + 2];
+    block_boxes1[threadIdx.x * 5 + 3] = boxes1[i * 5 + 3];
+    block_boxes1[threadIdx.x * 5 + 4] = boxes1[i * 5 + 4];
+
+    block_boxes2[threadIdx.x * 5 + 0] = boxes2[i * 5 + 0];
+    block_boxes2[threadIdx.x * 5 + 1] = boxes2[i * 5 + 1];
+    block_boxes2[threadIdx.x * 5 + 2] = boxes2[i * 5 + 2];
+    block_boxes2[threadIdx.x * 5 + 3] = boxes2[i * 5 + 3];
+    block_boxes2[threadIdx.x * 5 + 4] = boxes2[i * 5 + 4];
+  }
+
+  if (i < boxes1_size) {
+    out[i] = devRotateIoU(block_boxes1 + threadIdx.x * 5, block_boxes2 + threadIdx.x * 5);
+  }
 }
+
 
 // Define the GPU implementation that launches the CUDA kernel.
 template <typename T>
-struct RotatedIOUFunctor<GPUDevice, T> {
+struct RotatedIOUGridFunctor<GPUDevice, T> {
   void operator()(const GPUDevice& d,
     const int boxes1_size, const int boxes2_size,
     const T* boxes1, const T* boxes2,
@@ -308,15 +370,29 @@ struct RotatedIOUFunctor<GPUDevice, T> {
     //
     // See core/util/cuda_kernel_helper.h for example of computing
     // block count and thread_per_block count.
-    dim3 block_count(32, 32);
-    dim3 threads_per_block(32, 32);
+    dim3 block_count(DIVUP(boxes1_size, THREADS_PER_BLOCK), DIVUP(boxes2_size, THREADS_PER_BLOCK));
+    dim3 threads(THREADS_PER_BLOCK);
+
+    RotatedIOUGridCudaKernel<T>
+        <<<block_count, threads, 0, d.stream()>>>(boxes1_size, boxes2_size, boxes1, boxes2, out);
+  }
+};
+
+template <typename T>
+struct RotatedIOUFunctor<GPUDevice, T> {
+  void operator()(const GPUDevice& d,
+    const int boxes1_size, const int boxes2_size,
+    const T* boxes1, const T* boxes2,
+    T* out) {
+    dim3 block_count(DIVUP(boxes1_size, THREADS_PER_BLOCK));
 
     RotatedIOUCudaKernel<T>
-        <<<block_count, threads_per_block, 0, d.stream()>>>(boxes1_size, boxes2_size, boxes1, boxes2, out);
+        <<<block_count, THREADS_PER_BLOCK, 0, d.stream()>>>(boxes1_size, boxes2_size, boxes1, boxes2, out);
   }
 };
 
 // Explicitly instantiate functors for the types of OpKernels registered.
+template struct RotatedIOUGridFunctor<GPUDevice, float>;
 template struct RotatedIOUFunctor<GPUDevice, float>;
 }  // end namespace functor
 }  // end namespace tensorflow

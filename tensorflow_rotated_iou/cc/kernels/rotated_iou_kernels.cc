@@ -1,27 +1,16 @@
-/* 
-Based on https://github.com/DetectionTeamUCAS/RetinaNet_Tensorflow_Rotation/blob/master/libs/box_utils/rbbox_overlaps_kernel.cu
+/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
 
-Published under MIT License
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-Original Copyright (c) 2018 DetectionTeamUCAS
+    http://www.apache.org/licenses/LICENSE-2.0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ==============================================================================*/
 
 #if GOOGLE_CUDA
@@ -215,8 +204,8 @@ inline int inter_pts(float * pts1, float * pts2, float * int_pts) {
 inline void convert_region(float * pts , float const * const region) {
 
   float angle = region[4];
-  float a_cos = cos(angle/180.0*3.1415926535);
-  float a_sin = sin(angle/180.0*3.1415926535);
+  float a_cos = cos(angle);
+  float a_sin = sin(angle);
 
   float ctr_x = region[0];
   float ctr_y = region[1];
@@ -266,6 +255,11 @@ inline float inter(float const * const region1, float const * const region2) {
 
 
 inline float devRotateIoU(float const * const region1, float const * const region2) {
+  // no intersection for zero size boxes
+  if(((fabs(region1[2]) < 1e-5) && (fabs(region1[3] < 1e-5))) ||
+      ((fabs(region2[2]) < 1e-5) && (fabs(region2[3] < 1e-5)))) {
+    return 0.0;
+  }
 
   if((fabs(region1[0] - region2[0]) < 1e-5) && (fabs(region1[1] - region2[1]) < 1e-5) && (fabs(region1[2] - region2[2]) < 1e-5) && (fabs(region1[3] - region2[3]) < 1e-5) && (fabs(region1[4] - region2[4]) < 1e-5)) {
     return 1.0;
@@ -286,6 +280,19 @@ inline float devRotateIoU(float const * const region1, float const * const regio
 // CPU specialization of actual computation.
 template <typename T>
 struct RotatedIOUFunctor<CPUDevice, T> {
+  void operator()(const CPUDevice& d,
+    const int boxes1_size, const int boxes2_size,
+    const T* boxes1, const T* boxes2,
+    T* out
+  ) {
+    for (int i = 0; i < boxes1_size; ++i) {
+        out[i] = devRotateIoU(boxes1 + i * 5, boxes2 + i * 5);
+    }
+  }
+};
+
+template <typename T>
+struct RotatedIOUGridFunctor<CPUDevice, T> {
   void operator()(const CPUDevice& d,
     const int boxes1_size, const int boxes2_size,
     const T* boxes1, const T* boxes2,
@@ -316,6 +323,42 @@ class RotatedIOUOp : public OpKernel {
 
     TensorShape output_shape;
     output_shape.AddDim(boxes1_input_tensor.dim_size(0));
+
+    OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
+
+    // Do the computation.
+    OP_REQUIRES(context, boxes1_input_tensor.dim_size(0) <= tensorflow::kint32max,
+                errors::InvalidArgument("Too many elements in tensor"));
+    OP_REQUIRES(context, boxes2_input_tensor.dim_size(0) <= tensorflow::kint32max,
+                errors::InvalidArgument("Too many elements in tensor"));
+    OP_REQUIRES(context, boxes1_input_tensor.dim_size(0) == boxes2_input_tensor.dim_size(0),
+                errors::InvalidArgument("Boxes1 and 2 have to have the same number of elements"));
+
+    RotatedIOUFunctor<Device, T>()(
+        context->eigen_device<Device>(),
+        static_cast<int>(boxes1_input_tensor.dim_size(0)),
+        static_cast<int>(boxes2_input_tensor.dim_size(0)),
+        boxes1_input_tensor.flat<T>().data(),
+        boxes2_input_tensor.flat<T>().data(),
+        output_tensor->flat<T>().data());
+  }
+};
+
+template <typename Device, typename T>
+class RotatedIOUGridOp : public OpKernel {
+ public:
+  explicit RotatedIOUGridOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  void Compute(OpKernelContext* context) override {
+    // Grab the input tensor
+    const Tensor& boxes1_input_tensor = context->input(0);
+    const Tensor& boxes2_input_tensor = context->input(1);
+
+    // Create an output tensor
+    Tensor* output_tensor = NULL;
+
+    TensorShape output_shape;
+    output_shape.AddDim(boxes1_input_tensor.dim_size(0));
     output_shape.AddDim(boxes2_input_tensor.dim_size(0));
 
     OP_REQUIRES_OK(context, context->allocate_output(0, output_shape, &output_tensor));
@@ -326,7 +369,7 @@ class RotatedIOUOp : public OpKernel {
     OP_REQUIRES(context, boxes2_input_tensor.dim_size(0) <= tensorflow::kint32max,
                 errors::InvalidArgument("Too many elements in tensor"));
 
-    RotatedIOUFunctor<Device, T>()(
+    RotatedIOUGridFunctor<Device, T>()(
         context->eigen_device<Device>(),
         static_cast<int>(boxes1_input_tensor.dim_size(0)),
         static_cast<int>(boxes2_input_tensor.dim_size(0)),
@@ -341,7 +384,14 @@ class RotatedIOUOp : public OpKernel {
   REGISTER_KERNEL_BUILDER(                                       \
       Name("RotatedIOU").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
       RotatedIOUOp<CPUDevice, T>);
+
+#define REGISTER_CPU_GRID(T) \
+  REGISTER_KERNEL_BUILDER(                                       \
+      Name("RotatedIOUGrid").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+      RotatedIOUGridOp<CPUDevice, T>);
+
 REGISTER_CPU(float);
+REGISTER_CPU_GRID(float);
 
 // Register the GPU kernels.
 #ifdef GOOGLE_CUDA
@@ -350,7 +400,15 @@ REGISTER_CPU(float);
   REGISTER_KERNEL_BUILDER(                                       \
       Name("RotatedIOU").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
       RotatedIOUOp<GPUDevice, T>);
+
+#define REGISTER_GPU_GRID(T)  \
+  extern template struct RotatedIOUGridFunctor<GPUDevice, T>;           \
+  REGISTER_KERNEL_BUILDER(                                       \
+      Name("RotatedIOUGrid").Device(DEVICE_GPU).TypeConstraint<T>("T"), \
+      RotatedIOUGridOp<GPUDevice, T>);
+
 REGISTER_GPU(float);
+REGISTER_GPU_GRID(float);
 #endif  // GOOGLE_CUDA
 }
 }  // namespace tensorflow

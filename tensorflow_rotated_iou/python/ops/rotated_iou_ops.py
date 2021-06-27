@@ -23,4 +23,5 @@ from tensorflow.python.platform import resource_loader
 
 rotated_iou_ops = load_library.load_op_library(
     resource_loader.get_path_to_datafile('_rotated_iou_ops.so'))
+rotated_iou_grid = rotated_iou_ops.rotated_iou_grid
 rotated_iou = rotated_iou_ops.rotated_iou

@@ -88,45 +88,45 @@ done
 if [[ "$TF_NEED_CUDA" == "0" ]]; then
 
   # Check if it's installed
-  if [[ $(pip show tensorflow) == *tensorflow* ]] || [[ $(pip show tf-nightly) == *tf-nightly* ]] ; then
+  if [[ $(pip3 show tensorflow) == *tensorflow* ]] || [[ $(pip3 show tf-nightly) == *tf-nightly* ]] ; then
     echo 'Using installed tensorflow'
   else
     # Uninstall GPU version if it is installed.
-    if [[ $(pip show tensorflow-gpu) == *tensorflow-gpu* ]]; then
+    if [[ $(pip3 show tensorflow-gpu) == *tensorflow-gpu* ]]; then
       echo 'Already have gpu version of tensorflow installed. Uninstalling......\n'
-      pip uninstall tensorflow-gpu
-    elif [[ $(pip show tf-nightly-gpu) == *tf-nightly-gpu* ]]; then
+      pip3 uninstall tensorflow-gpu
+    elif [[ $(pip3 show tf-nightly-gpu) == *tf-nightly-gpu* ]]; then
       echo 'Already have gpu version of tensorflow installed. Uninstalling......\n'
-      pip uninstall tf-nightly-gpu
+      pip3 uninstall tf-nightly-gpu
     fi
     # Install CPU version
     echo 'Installing tensorflow......\n'
-    pip install tensorflow
+    pip3 install tensorflow
   fi
 
 else
 
   # Check if it's installed
-   if [[ $(pip show tensorflow-gpu) == *tensorflow-gpu* ]] || [[ $(pip show tf-nightly-gpu) == *tf-nightly-gpu* ]]; then
+   if [[ $(pip3 show tensorflow-gpu) == *tensorflow-gpu* ]] || [[ $(pip3 show tf-nightly-gpu) == *tf-nightly-gpu* ]]; then
     echo 'Using installed tensorflow-gpu'
   else
     # Uninstall CPU version if it is installed.
-    if [[ $(pip show tensorflow) == *tensorflow* ]]; then
+    if [[ $(pip3 show tensorflow) == *tensorflow* ]]; then
       echo 'Already have tensorflow non-gpu installed. Uninstalling......\n'
-      pip uninstall tensorflow
-    elif [[ $(pip show tf-nightly) == *tf-nightly* ]]; then
+      pip3 uninstall tensorflow
+    elif [[ $(pip3 show tf-nightly) == *tf-nightly* ]]; then
       echo 'Already have tensorflow non-gpu installed. Uninstalling......\n'
-      pip uninstall tf-nightly
+      pip3 uninstall tf-nightly
     fi
     # Install CPU version
     echo 'Installing tensorflow-gpu .....\n'
-    pip install tensorflow-gpu
+    pip3 install tensorflow-gpu
   fi
 fi
 
 
-TF_CFLAGS=( $(python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))') )
-TF_LFLAGS="$(python -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_link_flags()))')"
+TF_CFLAGS=( $(python3 -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_compile_flags()))') )
+TF_LFLAGS="$(python3 -c 'import tensorflow as tf; print(" ".join(tf.sysconfig.get_link_flags()))')"
 
 write_to_bazelrc "build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true"
 if [[ "$PIP_MANYLINUX2010" == "0" ]]; then

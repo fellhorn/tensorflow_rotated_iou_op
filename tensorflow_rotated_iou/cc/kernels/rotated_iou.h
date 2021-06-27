@@ -7,6 +7,15 @@ namespace tensorflow {
 namespace functor {
 
 template <typename Device, typename T>
+struct RotatedIOUGridFunctor {
+  void operator()(const Device& d,
+    const int boxes1_size, const int boxes2_size,
+    const T* boxes1, const T* boxes2,
+    T* out
+  );
+};
+
+template <typename Device, typename T>
 struct RotatedIOUFunctor {
   void operator()(const Device& d,
     const int boxes1_size, const int boxes2_size,
